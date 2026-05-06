@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radio Pro v15 - Permanent Favs</title>
+    <style>
+        :root { --bg: #050508; --accent: #007aff; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, system-ui, sans-serif; }
+        body { background: var(--bg); background: radial-gradient(circle at 20% 20%, #1a1a2e 0%, #050508 100%); height: 100vh; display: flex; align-items: center; justify-content: center; color: white; overflow: hidden; }
+        
+        .window { width: 920px; height: 650px; background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(40px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 35px; display: flex; box-shadow: 0 50px 100px rgba(0,0,0,0.8); }
+        .player { flex: 1.2; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; border-right: 1px solid rgba(255, 255, 255, 0.05); }
+        #viz { width: 100%; height: 80px; margin-bottom: 20px; }
+        .icon-box { width: 180px; height: 180px; background: rgba(255,255,255,0.03); border-radius: 40px; display: flex; align-items: center; justify-content: center; font-size: 90px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.1); }
+        .play-btn { width: 80px; height: 80px; background: white; color: black; border-radius: 50%; border: none; font-size: 30px; cursor: pointer; margin: 20px 0; transition: 0.2s; }
+        .play-btn:hover { background: var(--accent); color: white; transform: scale(1.05); }
+
+        .sidebar { width: 400px; background: rgba(0,0,0,0.3); display: flex; flex-direction: column; padding: 25px; }
+        .search-area { background: rgba(255,255,255,0.08); border-radius: 15px; padding: 12px; display: flex; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.1); }
+        .search-area input { background: none; border: none; color: white; flex: 1; outline: none; padding-left: 10px; font-size: 14px; }
+        
+        .list-container { flex: 1; overflow-y: auto; }
+        .section-title { font-size: 11px; color: var(--accent); font-weight: 800; letter-spacing: 1.5px; margin: 15px 0 10px 5px; text-transform: uppercase; }
+
+        .item { padding: 12px; background: rgba(255,255,255,0.03); margin-bottom: 6px; border-radius: 12px; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: 0.2s; }
+        .item:hover { background: rgba(255,255,255,0.1); }
+        
+        .star { margin-left: auto; color: rgba(255,255,255,0.1); font-size: 22px; transition: 0.2s; padding: 4px; z-index: 10; }
+        .star.active { color: #ffcc00; transform: scale(1.1); }
+
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="window">
+    <div class="player">
+        <canvas id="viz"></canvas>
+        <div class="icon-box">📻</div>
+        <h2 id="curName" style="text-align: center;">Twoje Radio</h2>
+        <p id="curTags" style="color: var(--accent); font-size: 10px; font-weight: bold; margin-top: 5px; opacity: 0.6;">ZAPISYWANIE AKTYWNE</p>
+        <button class="play-btn" id="pBtn" onclick="togglePlay()">▶</button>
+        <input type="range" min="0" max="1" step="0.01" value="0.8" style="width: 160px; accent-color: var(--accent);" oninput="audio.volume = this.value">
+    </div>
+
+    <div class="sidebar">
+        <div class="search-area">
+            <input type="text" id="sIn" placeholder="Wyszukaj i dodaj do ulubionych..." onkeypress="if(event.key==='Enter') search()">
+            <button onclick="search()" style="background:none; border:none; color:var(--accent); font-weight:bold; cursor:pointer;">SZUKAJ</button>
+        </div>
+        <div class="list-container">
+            <div class="section-title">MOJE ULUBIONE ★</div>
+            <div id="favList"></div>
+            <div class="section-title">WYNIKI SZUKANIA</div>
+            <div id="resList"></div>
+        </div>
+    </div>
+</div>
+
+<audio id="audio" crossorigin="anonymous"></audio>
+
+<script>
+    const audio = document.getElementById('audio');
+    const pBtn = document.getElementById('pBtn');
+    const canvas = document.getElementById('viz');
+    const ctx = canvas.getContext('2d');
+    const RADIO_IMG = 'https://cdn-icons-png.flaticon.com/512/651/651717.png';
+
+    // KLUCZ: Wczytywanie z pamięci stałej
+    let favs = JSON.parse(localStorage.getItem('RADIO_STATIONS_STABLE')) || [];
+
+    let audioCtx, analyser, source, dataArray;
+
+    function setupAudio() {
+        if (audioCtx) return;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioCtx.createAnalyser();
+            source = audioCtx.createMediaElementSource(audio);
+            source.connect(analyser);
+            analyser.connect(audioCtx.destination);
+            analyser.fftSize = 64;
+            dataArray = new Uint8Array(analyser.frequencyBinCount);
+            draw();
+        } catch(e) {}
+    }
+
+    function draw() {
+        requestAnimationFrame(draw);
+        if(!analyser) return;
+        analyser.getByteFrequencyData(dataArray);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.beginPath(); ctx.strokeStyle = '#007aff'; ctx.lineWidth = 3;
+        let sliceWidth = canvas.width / dataArray.length;
+        let x = 0;
+        for(let i=0; i<dataArray.length; i++) {
+            let v = dataArray[i]/128.0;
+            let y = v * canvas.height/2;
+            if(i===0) ctx.moveTo(x, canvas.height/2-y); else ctx.lineTo(x, canvas.height/2-y);
+            x += sliceWidth;
+        }
+        ctx.stroke();
+    }
+
+    async function search() {
+        const q = document.getElementById('sIn').value || 'RMF';
+        try {
+            const res = await fetch(`https://de1.api.radio-browser.info/json/stations/byname/${encodeURIComponent(q)}`);
+            const data = await res.json();
+            renderList(data.slice(0, 20), document.getElementById('resList'));
+        } catch(e) { alert("Błąd wyszukiwania. Spróbuj ponownie."); }
+    }
+
+    function renderList(data, container) {
+        container.innerHTML = '';
+        data.forEach(s => {
+            const isF = favs.some(f => f.stationuuid === s.stationuuid);
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.innerHTML = `
+                <span>📻</span>
+                <div style="flex:1;overflow:hidden"><b>${s.name}</b></div>
+                <div class="star ${isF?'active':''}" onclick="event.stopPropagation(); toggleFav(${JSON.stringify(s).replace(/"/g, '&quot;')})">★</div>
+            `;
+            div.onclick = () => play(s);
+            container.appendChild(div);
+        });
+    }
+
+    function play(s) {
+        setupAudio();
+        if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        audio.src = s.url;
+        audio.play().then(() => pBtn.innerText = '⏸').catch(() => {
+            // Reanimacja przy błędzie CORS
+            audio.removeAttribute('crossorigin');
+            audio.load();
+            audio.play();
+        });
+        
+        document.getElementById('curName').innerText = s.name;
+        document.getElementById('curTags').innerText = (s.tags || 'RADIO LIVE').toUpperCase();
+
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: s.name, artist: 'Radio Pro',
+                artwork: [{ src: RADIO_IMG, sizes: '512x512', type: 'image/png' }]
+            });
+        }
+    }
+
+    function togglePlay() {
+        if (audio.paused) { audio.play(); pBtn.innerText = '⏸'; }
+        else { audio.pause(); pBtn.innerText = '▶'; }
+    }
+
+    // KLUCZ: Funkcja która ZAPISUJE na stałe
+    function toggleFav(s) {
+        const idx = favs.findIndex(f => f.stationuuid === s.stationuuid);
+        if (idx === -1) {
+            favs.push(s);
+        } else {
+            favs.splice(idx, 1);
+        }
+        // Zapis do localStorage
+        localStorage.setItem('RADIO_STATIONS_STABLE', JSON.stringify(favs));
+        
+        // Odśwież widok
+        renderFavs();
+        search(); 
+    }
+
+    function renderFavs() {
+        renderList(favs, document.getElementById('favList'));
+    }
+
+    window.onload = () => { 
+        renderFavs(); 
+        search(); 
+        canvas.width = canvas.offsetWidth;
+        canvas.height = canvas.offsetHeight;
+    };
+</script>
+</body>
+</html>
